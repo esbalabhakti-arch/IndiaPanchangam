@@ -1,39 +1,29 @@
-// script.js   — IST version
-// All times in panchangam.txt are in Portland time (PST, UTC-8).
-// This script converts them to IST (UTC+5:30) and then finds
-// the current/next Tithi, Nakshatra, Yogam and Karanam in IST.
-
-// ---- Constants ----
-const MS_PER_MIN   = 60 * 1000;
-const MS_PER_HOUR  = 60 * MS_PER_MIN;
-const PST_TO_UTC_H = 8;   // PST (UTC-8) -> UTC = +8h
-const UTC_TO_IST_H = 5;   // UTC -> IST = +5h
-const UTC_TO_IST_M = 30;  // UTC -> IST extra 30 min
+// script.js
 
 // ---- Utilities ----
 
-// Build a Date object in IST from a PST timestamp "y/m/d hh:mm"
-function makeIstFromPortland(y, m, d, hh, mm) {
-  const utcMs = Date.UTC(
-    Number(y),
-    Number(m) - 1,
-    Number(d),
-    Number(hh) + PST_TO_UTC_H, // PST -> UTC
-    Number(mm)
-  );
-  const istMs =
-    utcMs + UTC_TO_IST_H * MS_PER_HOUR + UTC_TO_IST_M * MS_PER_MIN;
-  return new Date(istMs); // Displays in browser local time (IST for India users)
+// Create a Date in local time from numeric components
+function makeLocalDate(y, m, d, hh, mm) {
+  // JS months are 0-based
+  return new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), 0, 0);
 }
 
-// Format a Date like the panchangam style: "YYYY/MM/DD HH:MM"
+// Format a Date like the panchangam text: "YYYY/MM/DD HH:MM"
 function formatDateTime(dt) {
-  const y  = dt.getFullYear();
-  const m  = String(dt.getMonth() + 1).padStart(2, "0");
-  const d  = String(dt.getDate()).padStart(2, "0");
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
   const hh = String(dt.getHours()).padStart(2, "0");
   const mm = String(dt.getMinutes()).padStart(2, "0");
   return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+
+// Produce a "YYYY/MM/DD" key from a Date
+function dateKeyFromDate(dt) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}/${m}/${d}`;
 }
 
 // Parse a single interval line
@@ -45,8 +35,8 @@ function parseIntervalLine(line) {
   if (!m) return null;
 
   const name = m[1].trim();
-  const start = makeIstFromPortland(m[2], m[3], m[4], m[5], m[6]);
-  const end   = makeIstFromPortland(m[7], m[8], m[9], m[10], m[11]);
+  const start = makeLocalDate(m[2], m[3], m[4], m[5], m[6]);
+  const end = makeLocalDate(m[7], m[8], m[9], m[10], m[11]);
 
   return { name, start, end };
 }
@@ -87,9 +77,7 @@ function formatTimeRemaining(end, now) {
 
 // Extract the lines belonging to a section starting with a label like "Thithi details"
 function extractSection(lines, startLabel) {
-  const startIdx = lines.findIndex((l) =>
-    l.trim().startsWith(startLabel)
-  );
+  const startIdx = lines.findIndex((l) => l.trim().startsWith(startLabel));
   if (startIdx === -1) return [];
 
   const out = [];
@@ -98,9 +86,8 @@ function extractSection(lines, startLabel) {
     const trimmed = line.trim();
 
     // Stop when we hit another "details:" header (for a different section)
-    if (/details\s*:$/i.test(trimmed) && !trimmed.startsWith(startLabel)) {
-      break;
-    }
+    if (/details\s*:$/i.test(trimmed) && !trimmed.startsWith(startLabel)) break;
+
     out.push(line);
   }
   return out;
@@ -123,16 +110,14 @@ function getIntervalsFromSection(sectionLines) {
 // Get a simple "Label : Value" header line (e.g. "Samvatsaram : Vishwaavasu")
 function getHeaderValue(lines, label) {
   const lowerLabel = label.toLowerCase();
-  const line = lines.find((l) =>
-    l.trim().toLowerCase().startsWith(lowerLabel)
-  );
+  const line = lines.find((l) => l.trim().toLowerCase().startsWith(lowerLabel));
   if (!line) return null;
   const parts = line.split(":");
   if (parts.length < 2) return null;
   return parts[1].trim();
 }
 
-// Extract raw backend timestamp string (still in PST in the file)
+// Get backend timestamp line: "Date and time created: 2025/12/01 15:15:42"
 function getBackendTimestamp(lines) {
   const line = lines.find((l) =>
     l.trim().toLowerCase().startsWith("date and time created")
@@ -140,37 +125,22 @@ function getBackendTimestamp(lines) {
   if (!line) return null;
   const parts = line.split(":");
   if (parts.length < 2) return null;
+  // Join everything after the first ":" in case there are extra colons
   return parts.slice(1).join(":").trim();
 }
 
-// Convert a backend timestamp like "2025/12/01 15:15:42" from PST -> IST
-function convertBackendTimestampPstToIst(rawTs) {
-  const re =
-    /(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2}):(\d{2})/;
-  const m = rawTs.match(re);
-  if (!m) return rawTs; // if format unexpected, just show as-is
+// For Rahukala/Yamaganda/Durmuhurtha/Varjyam: get intervals whose START date
+// matches the given "YYYY/MM/DD" key and return a human-readable string.
+function getKalaTextForDate(sectionLines, dateKey) {
+  const ivs = getIntervalsFromSection(sectionLines);
+  const matches = ivs.filter((iv) => dateKeyFromDate(iv.start) === dateKey);
 
-  const [_, y, mo, d, hh, mm, ss] = m.map(Number);
+  if (matches.length === 0) return "–";
 
-  const utcMs = Date.UTC(
-    y,
-    mo - 1,
-    d,
-    hh + PST_TO_UTC_H,
-    mm,
-    ss
-  );
-  const istMs =
-    utcMs + UTC_TO_IST_H * MS_PER_HOUR + UTC_TO_IST_M * MS_PER_MIN;
-  const dt = new Date(istMs);
-
-  const yy  = dt.getFullYear();
-  const m2  = String(dt.getMonth() + 1).padStart(2, "0");
-  const d2  = String(dt.getDate()).padStart(2, "0");
-  const hh2 = String(dt.getHours()).padStart(2, "0");
-  const mm2 = String(dt.getMinutes()).padStart(2, "0");
-  const ss2 = String(dt.getSeconds()).padStart(2, "0");
-  return `${yy}/${m2}/${d2} ${hh2}:${mm2}:${ss2}`;
+  // Join multiple intervals if they exist
+  return matches
+    .map((iv) => `${formatDateTime(iv.start)} to ${formatDateTime(iv.end)}`)
+    .join("; ");
 }
 
 // ---- Main ----
@@ -184,121 +154,117 @@ async function main() {
     const res = await fetch("panchangam.txt");
     if (!res.ok) throw new Error("Could not load panchangam.txt");
     const text = await res.text();
+
     const lines = text.split(/\r?\n/);
 
-    // --- Header info (Samvatsaram, Ayanam, etc.) ---
-    const samvatsaramVal = getHeaderValue(lines, "Samvatsaram");
-    const ayanamVal      = getHeaderValue(lines, "Ayanam");
-    const ruthuVal       = getHeaderValue(lines, "Ruthu");
-    const masamVal       = getHeaderValue(lines, "Masam");
-    const pakshamVal     = getHeaderValue(lines, "Paksham");
-
-    const samEl = document.getElementById("samvatsaram");
-    const ayaEl = document.getElementById("ayanam");
-    const rutEl = document.getElementById("ruthu");
-    const masEl = document.getElementById("masam");
-    const pakEl = document.getElementById("paksham");
-
-    if (samEl) samEl.textContent = samvatsaramVal || "–";
-    if (ayaEl) ayaEl.textContent = ayanamVal || "–";
-    if (rutEl) rutEl.textContent = ruthuVal || "–";
-    if (masEl) masEl.textContent = masamVal || "–";
-    if (pakEl) pakEl.textContent = pakshamVal || "–";
-
-    // --- Backend time stamp (displayed in IST) ---
-    const rawBackendTs = getBackendTimestamp(lines);
-    const backendTsIst = rawBackendTs
-      ? convertBackendTimestampPstToIst(rawBackendTs)
-      : null;
-
+    // --- Backend time stamp ---
+    const backendTs = getBackendTimestamp(lines);
     if (backendDisplay) {
-      backendDisplay.textContent = backendTsIst
-        ? `(Panchangam back-end time stamp (IST): ${backendTsIst})`
+      backendDisplay.textContent = backendTs
+        ? `(Panchangam back-end time stamp: ${backendTs})`
         : "";
     }
 
-    // --- Interval sections (still read from same PST file) ---
-    const tithiSection  = extractSection(lines, "Thithi details");
-    const nakSection    = extractSection(lines, "Nakshatram details");
-    const yogaSection   = extractSection(lines, "Yogam details");
+    // --- Interval sections ---
+    const tithiSection = extractSection(lines, "Thithi details");
+    const nakSection = extractSection(lines, "Nakshatram details");
+    const yogaSection = extractSection(lines, "Yogam details");
     const karanaSection = extractSection(lines, "Karanam details");
 
-    const tithiIntervals  = getIntervalsFromSection(tithiSection);
-    const nakIntervals    = getIntervalsFromSection(nakSection);
-    const yogaIntervals   = getIntervalsFromSection(yogaSection);
+    const tithiIntervals = getIntervalsFromSection(tithiSection);
+    const nakIntervals = getIntervalsFromSection(nakSection);
+    const yogaIntervals = getIntervalsFromSection(yogaSection);
     const karanaIntervals = getIntervalsFromSection(karanaSection);
 
-    // "now" — in browser local time (IST for India users)
-    const now = new Date();
+    const now = new Date(); // local time in the user's browser
     if (nowDisplay) {
-      nowDisplay.textContent =
-        `Current time (your browser, IST): ${now.toLocaleString()}`;
+      nowDisplay.textContent = `Current time (your browser): ${now.toLocaleString()}`;
     }
+    const todayKey = dateKeyFromDate(now);
 
     // ----- Tithi -----
-    const { current: tithiCur, next: tithiNext } =
-      findCurrentAndNext(tithiIntervals, now);
-    document.getElementById("tithi-current").textContent =
-      tithiCur ? tithiCur.name : "Not in range";
-    document.getElementById("tithi-remaining").textContent =
-      tithiCur ? formatTimeRemaining(tithiCur.end, now) : "";
+    const { current: tithiCur, next: tithiNext } = findCurrentAndNext(
+      tithiIntervals,
+      now
+    );
+    document.getElementById("tithi-current").textContent = tithiCur
+      ? tithiCur.name
+      : "Not in range";
+    document.getElementById("tithi-remaining").textContent = tithiCur
+      ? formatTimeRemaining(tithiCur.end, now)
+      : "";
 
-    if (tithiNext) {
-      document.getElementById("tithi-next").textContent =
-        `${tithiNext.name} (starts: ${formatDateTime(tithiNext.start)})`;
-    } else {
-      document.getElementById("tithi-next").textContent = "–";
-    }
+    document.getElementById("tithi-next").textContent = tithiNext
+      ? `${tithiNext.name} (starts: ${formatDateTime(tithiNext.start)})`
+      : "–";
 
     // ----- Nakshatra -----
-    const { current: nakCur, next: nakNext } =
-      findCurrentAndNext(nakIntervals, now);
-    document.getElementById("nak-current").textContent =
-      nakCur ? nakCur.name : "Not in range";
-    document.getElementById("nak-remaining").textContent =
-      nakCur ? formatTimeRemaining(nakCur.end, now) : "";
+    const { current: nakCur, next: nakNext } = findCurrentAndNext(
+      nakIntervals,
+      now
+    );
+    document.getElementById("nak-current").textContent = nakCur
+      ? nakCur.name
+      : "Not in range";
+    document.getElementById("nak-remaining").textContent = nakCur
+      ? formatTimeRemaining(nakCur.end, now)
+      : "";
 
-    if (nakNext) {
-      document.getElementById("nak-next").textContent =
-        `${nakNext.name} (starts: ${formatDateTime(nakNext.start)})`;
-    } else {
-      document.getElementById("nak-next").textContent = "–";
-    }
+    document.getElementById("nak-next").textContent = nakNext
+      ? `${nakNext.name} (starts: ${formatDateTime(nakNext.start)})`
+      : "–";
 
     // ----- Yogam -----
-    const { current: yogaCur, next: yogaNext } =
-      findCurrentAndNext(yogaIntervals, now);
-    document.getElementById("yoga-current").textContent =
-      yogaCur ? yogaCur.name : "Not in range";
-    document.getElementById("yoga-remaining").textContent =
-      yogaCur ? formatTimeRemaining(yogaCur.end, now) : "";
+    const { current: yogaCur, next: yogaNext } = findCurrentAndNext(
+      yogaIntervals,
+      now
+    );
+    document.getElementById("yoga-current").textContent = yogaCur
+      ? yogaCur.name
+      : "Not in range";
+    document.getElementById("yoga-remaining").textContent = yogaCur
+      ? formatTimeRemaining(yogaCur.end, now)
+      : "";
 
-    if (yogaNext) {
-      document.getElementById("yoga-next").textContent =
-        `${yogaNext.name} (starts: ${formatDateTime(yogaNext.start)})`;
-    } else {
-      document.getElementById("yoga-next").textContent = "–";
-    }
+    document.getElementById("yoga-next").textContent = yogaNext
+      ? `${yogaNext.name} (starts: ${formatDateTime(yogaNext.start)})`
+      : "–";
 
     // ----- Karanam -----
-    const { current: karCur, next: karNext } =
-      findCurrentAndNext(karanaIntervals, now);
-    document.getElementById("karana-current").textContent =
-      karCur ? karCur.name : "Not in range";
-    document.getElementById("karana-remaining").textContent =
-      karCur ? formatTimeRemaining(karCur.end, now) : "";
+    const { current: karCur, next: karNext } = findCurrentAndNext(
+      karanaIntervals,
+      now
+    );
+    document.getElementById("karana-current").textContent = karCur
+      ? karCur.name
+      : "Not in range";
+    document.getElementById("karana-remaining").textContent = karCur
+      ? formatTimeRemaining(karCur.end, now)
+      : "";
 
-    if (karNext) {
-      document.getElementById("karana-next").textContent =
-        `${karNext.name} (starts: ${formatDateTime(karNext.start)})`;
-    } else {
-      document.getElementById("karana-next").textContent = "–";
-    }
+    document.getElementById("karana-next").textContent = karNext
+      ? `${karNext.name} (starts: ${formatDateTime(karNext.start)})`
+      : "–";
+
+    // ----- Rahu Kalam & related daily details -----
+    const rahuSection = extractSection(lines, "Rahukala details");
+    const yamaSection = extractSection(lines, "Yamaganda details");
+    const durmSection = extractSection(lines, "Durmuhurtha details");
+    const varjSection = extractSection(lines, "Varjyam details");
+
+    const rahuEl = document.getElementById("rahukala-today");
+    const yamaEl = document.getElementById("yamaganda-today");
+    const durmEl = document.getElementById("durmuhurtha-today");
+    const varjEl = document.getElementById("varjyam-today");
+
+    if (rahuEl) rahuEl.textContent = getKalaTextForDate(rahuSection, todayKey);
+    if (yamaEl) yamaEl.textContent = getKalaTextForDate(yamaSection, todayKey);
+    if (durmEl) durmEl.textContent = getKalaTextForDate(durmSection, todayKey);
+    if (varjEl) varjEl.textContent = getKalaTextForDate(varjSection, todayKey);
 
     if (statusEl) {
-      statusEl.textContent = "Panchangam loaded from panchangam.txt (Portland PST -> IST converted)";
+      statusEl.textContent = "Panchangam loaded from panchangam.txt";
     }
-
   } catch (err) {
     console.error(err);
     if (statusEl) {
